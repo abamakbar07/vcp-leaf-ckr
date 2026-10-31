@@ -147,7 +147,7 @@ export default function ScannerApp() {
         }
 
         const stdNetWeight = skuMasterMap.get(parsed.lotCode) || 200.0;
-        const scannedWeightCt = parsed.netWeight / stdNetWeight;
+        const scannedWeightCt = parsed.netWeight! / stdNetWeight;
         const projectedCt = (matchedLot.scanned_ct || 0) + scannedWeightCt;
         const maxAllowedCt = Number(matchedLot.qty_usage_ct);
 
