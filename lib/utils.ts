@@ -1,7 +1,20 @@
-// lib/utils.ts
+
+export type ParsedBarcode =
+  | { isValid: false; message: string }
+  | {
+      isValid: true;
+      serialNumber: string;
+      lotCode: string;
+      pmiRunNo: string;
+      caseNo: string;
+      grossWeight: number;
+      netWeight: number;
+      moisture: number;
+      gradeCode: string;
+    };
 
 // Fungsi Parser Barcode HMS
-export function parseHMSBarcode(snString: string) {
+export function parseHMSBarcode(snString: string): ParsedBarcode {
   if (!snString || snString.length !== 31) {
     return { isValid: false, message: "Panjang Barcode Bukan 31 Karakter!" };
   }
@@ -29,13 +42,17 @@ export function getISOWeek(dateString: string) {
 }
 
 // Fungsi Audio Web (Buzzer & Beep)
+let sharedAudioCtx: AudioContext | null = null;
+
 export function playAudio(type: 'success' | 'warning' | 'error') {
   if (typeof window !== 'undefined') {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioContextClass) return;
-    
-    const ctx = new AudioContextClass();
+
+    if (!sharedAudioCtx) sharedAudioCtx = new AudioContextClass();
+    const ctx = sharedAudioCtx as AudioContext;
+    if (ctx.state === 'suspended') ctx.resume();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     
@@ -70,4 +87,12 @@ export function playAudio(type: 'success' | 'warning' | 'error') {
       osc.stop(now + 0.6);
     }
   }
+}
+
+// Getaran HP / RF device (sama seperti versi statis)
+export function triggerHaptic(type: 'success' | 'warning' | 'error') {
+  if (typeof navigator === 'undefined' || !navigator.vibrate) return;
+  if (type === 'success') navigator.vibrate(150);
+  else if (type === 'warning') navigator.vibrate([100, 50, 100]);
+  else navigator.vibrate([200, 100, 200, 100, 300]);
 }
