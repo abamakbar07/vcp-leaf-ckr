@@ -2,7 +2,7 @@
 'use client';
 import { useCallback, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-import { parseHMSBarcode } from '@/lib/utils';
+import { parseHMSBarcode, getISOWeek } from '@/lib/utils';
 import DispatchModal from './DispatchModal';
 import { Notify, Order } from './types';
 
@@ -22,6 +22,7 @@ const ritOf = (o: Order) => o.arrival_time || '-';
 
 export default function LoadingTab({ allOrders, whList, defaultWH, checkerName, notify, onDone }: Props) {
   const [wh, setWh] = useState(defaultWH);
+  const [week, setWeek] = useState('');
   const [date, setDate] = useState('');
   const [rit, setRit] = useState('');
   const [logs, setLogs] = useState<LoadLog[]>([]);
@@ -30,8 +31,10 @@ export default function LoadingTab({ allOrders, whList, defaultWH, checkerName, 
   const inputRef = useRef<HTMLInputElement>(null);
   const busyRef = useRef(false);
 
-  const dates = Array.from(new Set(allOrders.filter(o => whOf(o) === wh).map(o => o.arrival_date)));
-  const rits = Array.from(new Set(allOrders.filter(o => whOf(o) === wh && o.arrival_date === date).map(ritOf)));
+  const byWh = allOrders.filter(o => whOf(o) === wh);
+  const weeks = Array.from(new Set(byWh.map(o => getISOWeek(o.arrival_date))));
+  const dates = Array.from(new Set(byWh.filter(o => getISOWeek(o.arrival_date) === week).map(o => o.arrival_date)));
+  const rits = Array.from(new Set(byWh.filter(o => o.arrival_date === date).map(ritOf)));
 
   const fetchLogs = useCallback(async (w: string, d: string, r: string) => {
     notify('⏳ Memuat data staging RIT...', 'warning', true);
@@ -50,7 +53,8 @@ export default function LoadingTab({ allOrders, whList, defaultWH, checkerName, 
     } catch (err: any) { notify(`❌ Error loading data: ${err.message}`, 'error'); }
   }, [allOrders, notify]);
 
-  const onWh = (v: string) => { setWh(v); setDate(''); setRit(''); setLogs([]); setPanelOpen(false); };
+  const onWh = (v: string) => { setWh(v); setWeek(''); setDate(''); setRit(''); setLogs([]); setPanelOpen(false); };
+  const onWeek = (v: string) => { setWeek(v); setDate(''); setRit(''); setLogs([]); setPanelOpen(false); };
   const onDate = (v: string) => { setDate(v); setRit(''); setLogs([]); setPanelOpen(false); };
   const onRit = (v: string) => {
     setRit(v);
@@ -104,16 +108,24 @@ export default function LoadingTab({ allOrders, whList, defaultWH, checkerName, 
         </select>
       </div>
 
+      <div className="mb-3">
+        <label className="block text-xs font-bold text-gray-500 mb-1">1. Week Kedatangan:</label>
+        <select value={week} onChange={e => onWeek(e.target.value)} disabled={!wh} className={selectCls}>
+          <option value="">- Pilih Week -</option>
+          {weeks.map(w => <option key={w} value={w}>{w}</option>)}
+        </select>
+      </div>
+
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="block text-xs font-bold text-gray-500 mb-1">1. Tanggal Kedatangan:</label>
-          <select value={date} onChange={e => onDate(e.target.value)} disabled={!wh} className={selectCls}>
+          <label className="block text-xs font-bold text-gray-500 mb-1">2. Tanggal Kedatangan:</label>
+          <select value={date} onChange={e => onDate(e.target.value)} disabled={!week} className={selectCls}>
             <option value="">- Date -</option>
             {dates.map(d => <option key={d} value={d}>{d}</option>)}
           </select>
         </div>
         <div>
-          <label className="block text-xs font-bold text-gray-500 mb-1">2. Pilih RIT / Jam:</label>
+          <label className="block text-xs font-bold text-gray-500 mb-1">3. Pilih RIT / Jam:</label>
           <select value={rit} onChange={e => onRit(e.target.value)} disabled={!date} className={selectCls}>
             <option value="">- RIT -</option>
             {rits.map(r => <option key={r} value={r}>{r}</option>)}
@@ -147,11 +159,15 @@ export default function LoadingTab({ allOrders, whList, defaultWH, checkerName, 
 
           <button
             onClick={() => setShowDispatch(true)}
-            disabled={!canDispatch}
-            className="w-full min-h-12 rounded-lg bg-green-700 text-white font-bold text-sm disabled:opacity-50"
+            className="w-full min-h-12 rounded-lg bg-green-700 text-white font-bold text-sm"
           >
-            📸 AMBIL 4 FOTO &amp; SELESAIKAN LOADING TRUK
+            📸 FOTO SERRICO &amp; DISPATCH (BEFORE / AFTER)
           </button>
+          {!canDispatch && (
+            <p className="mt-1.5 text-xs text-gray-500 text-center">
+              Foto BEFORE bisa disimpan sekarang. Foto AFTER aktif setelah semua box tervalidasi masuk truk.
+            </p>
+          )}
         </div>
       )}
 
@@ -160,6 +176,7 @@ export default function LoadingTab({ allOrders, whList, defaultWH, checkerName, 
           whId={wh}
           loadDate={date}
           loadRit={rit}
+          allLoaded={canDispatch}
           checkerName={checkerName}
           notify={notify}
           onClose={() => setShowDispatch(false)}

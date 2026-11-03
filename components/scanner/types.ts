@@ -18,3 +18,12 @@ export type FeedbackType = 'success' | 'error' | 'warning';
 
 // silent = true -> hanya toast, tanpa suara/getar/flash (setara showFeedback di versi statis)
 export type Notify = (msg: string, type: FeedbackType, silent?: boolean) => void;
+
+export type PoStatus = {
+  grouping_done: boolean;
+  grouping_at: string | null;
+  grouping_by: string | null;
+  qc_done: boolean;
+  qc_at: string | null;
+  qc_by: string | null;
+};

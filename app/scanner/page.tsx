@@ -1,16 +1,19 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-'use client';
+'use client'; // Wajib untuk interaksi klien dan hooks di App Router
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { parseHMSBarcode, playAudio, triggerHaptic, getISOWeek } from '@/lib/utils';
 import type { ParsedBarcode } from '@/lib/utils';
-import { Package, Truck } from 'lucide-react';
+import { Package, Truck, ClipboardCheck } from 'lucide-react';
 import BypassModal from '@/components/scanner/BypassModal';
 import LogsModal from '@/components/scanner/LogsModal';
 import MonitoringModal from '@/components/scanner/MonitoringModal';
 import LoadingTab from '@/components/scanner/LoadingTab';
-import type { FeedbackType, Notify, Order, OrderItem } from '@/components/scanner/types';
+import PickingTab from '@/components/scanner/PickingTab';
+import StatusConfirmModal from '@/components/scanner/StatusConfirmModal';
+import type { FeedbackType, Notify, Order, OrderItem, PoStatus } from '@/components/scanner/types';
 
 type ValidBarcode = Extract<ParsedBarcode, { isValid: true }>;
 
@@ -19,10 +22,9 @@ const ritOf = (o: Order) => o.arrival_time || '-';
 
 export default function ScannerApp() {
   // --- STATES UTAMA ---
-  const [activeTab, setActiveTab] = useState<'picking' | 'loading'>('picking');
-  const [checkerName, setCheckerName] = useState(() =>
-    typeof window !== 'undefined' ? localStorage.getItem('hms_checker_name') || '' : ''
-  );
+  type Tab = 'picking' | 'monitoring' | 'loading';
+  const [activeTab, setActiveTab] = useState<Tab>('picking');
+  const [checkerName, setCheckerName] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [feedback, setFeedback] = useState<{ msg: string; type: FeedbackType } | null>(null);
@@ -49,6 +51,9 @@ export default function ScannerApp() {
   const [keyboardOn, setKeyboardOn] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [showMon, setShowMon] = useState(false);
+  const [poStatus, setPoStatus] = useState<PoStatus | null>(null);
+  const [statusConfirm, setStatusConfirm] = useState<{ field: 'grouping' | 'qc'; next: boolean } | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
   const [pendingScan, setPendingScan] = useState<{ parsed: ValidBarcode; po: string; rit: string; message: string } | null>(null);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -73,6 +78,10 @@ export default function ScannerApp() {
 
   // --- EFFECT AWAL: nama checker, SKU master, orders ---
   useEffect(() => {
+    setCheckerName(localStorage.getItem('hms_checker_name') || '');
+    const lastTab = localStorage.getItem('scanner_last_tab');
+    if (lastTab === 'picking' || lastTab === 'monitoring' || lastTab === 'loading') setActiveTab(lastTab);
+
     async function initData() {
       const { data: skuData, error: skuError } = await supabase.from('vcp-op-sku_master').select('lot_code, std_net_weight_kg');
       if (skuError) console.error('Error loading SKU Master:', skuError);
@@ -93,6 +102,12 @@ export default function ScannerApp() {
     inputRef.current?.focus();
   }, [notify]);
 
+  const changeTab = (t: Tab) => {
+    setActiveTab(t);
+    localStorage.setItem('scanner_last_tab', t);
+    if (t === 'monitoring') setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
   const onCheckerChange = (v: string) => {
     setCheckerName(v);
     localStorage.setItem('hms_checker_name', v.trim());
@@ -100,7 +115,7 @@ export default function ScannerApp() {
 
   // --- LOAD DETAIL PO (parameter eksplisit supaya tidak bergantung state yang belum ter-update) ---
   const loadPODetails = useCallback(async (po: string, rit: string) => {
-    if (!po || !rit) { applyItems([]); return; }
+    if (!po || !rit) { applyItems([]); setPoStatus(null); return; }
     try {
       const { data: items, error: itemsError } = await supabase
         .from('vcp-op-order_items').select('*').eq('po_number', po).eq('arrival_time', rit);
@@ -118,13 +133,20 @@ export default function ScannerApp() {
         return { ...item, scanned_ct: parseFloat((totalWeight / std).toFixed(2)) } as OrderItem;
       });
       applyItems(processed);
+
+      // Status Grouping & QC (kalau tabel belum dibuat, cukup log error, scan tetap jalan)
+      const hdr = allOrders.find(o => o.po_number === po && ritOf(o) === rit);
+      const { data: st, error: stErr } = await supabase.from('vcp-op-po_status').select('*')
+        .eq('po_number', po).eq('arrival_time', rit).eq('wh_id', hdr ? whOf(hdr) : 'WH01').maybeSingle();
+      if (stErr) console.error('Load po_status:', stErr);
+      setPoStatus((st as PoStatus) || null);
     } catch (err: any) {
       notify(`Gagal Load PO Detail: ${err.message}`, 'error');
     }
-  }, [applyItems, notify]);
+  }, [allOrders, applyItems, notify]);
 
   // --- HANDLER DROPDOWN (reset berjenjang, tabel LOT ikut dikosongkan) ---
-  const resetPO = () => { setActivePO(''); applyItems([]); };
+  const resetPO = () => { setActivePO(''); applyItems([]); setPoStatus(null); };
   const onWH = (v: string) => { setActiveWH(v); setActiveWeek(''); setActiveDate(''); setActiveRit(''); resetPO(); };
   const onWeek = (v: string) => { setActiveWeek(v); setActiveDate(''); setActiveRit(''); resetPO(); };
   const onDate = (v: string) => { setActiveDate(v); setActiveRit(''); resetPO(); };
@@ -221,7 +243,7 @@ export default function ScannerApp() {
     e.preventDefault();
     const raw = e.currentTarget.value.trim();
     e.currentTarget.value = '';
-    if (!raw || pendingScan) return;
+    if (!raw || pendingScan || statusConfirm) return;
     if (!activePO) return notify('⚠️ Tolong PILIH PO TARGET terlebih dahulu!', 'warning');
 
     const po = activePO, rit = activeRit;
@@ -241,6 +263,42 @@ export default function ScannerApp() {
     inputRef.current?.focus();
   }, []);
 
+  // --- STATUS GROUPING & QC (popup konfirmasi -> timestamp tercatat) ---
+  const requestStatus = (field: 'grouping' | 'qc') => {
+    const cur = field === 'grouping' ? !!poStatus?.grouping_done : !!poStatus?.qc_done;
+    if (field === 'qc' && !cur && !poStatus?.grouping_done) return notify('⚠️ Selesaikan GROUPING dulu sebelum QC.', 'warning');
+    if (field === 'grouping' && cur && poStatus?.qc_done) return notify('⚠️ QC sudah dicentang. Batalkan QC dulu.', 'warning');
+    (document.activeElement as HTMLElement | null)?.blur();
+    setStatusConfirm({ field, next: !cur });
+  };
+
+  const confirmStatus = async () => {
+    if (!statusConfirm || !activePO) return;
+    const { field, next } = statusConfirm;
+    const label = field === 'grouping' ? 'GROUPING' : 'QC';
+    const hdr = allOrders.find(o => o.po_number === activePO && ritOf(o) === activeRit);
+    const now = new Date().toISOString();
+    setStatusBusy(true);
+    try {
+      const { error } = await supabase.from('vcp-op-po_status').upsert({
+        po_number: activePO, arrival_time: activeRit, wh_id: hdr ? whOf(hdr) : (activeWH || 'WH01'),
+        [`${field}_done`]: next,
+        [`${field}_at`]: next ? now : null,
+        [`${field}_by`]: next ? (checkerName.trim() || 'anon') : null,
+        updated_at: now,
+      }, { onConflict: 'po_number,arrival_time,wh_id' });
+      if (error) throw error;
+      notify(next ? `✅ ${label} tercatat` : `↩️ ${label} dibatalkan`, 'success');
+      setStatusConfirm(null);
+      await loadPODetails(activePO, activeRit);
+    } catch (err: any) {
+      notify(`❌ Gagal simpan status: ${err.message}`, 'error');
+    } finally { setStatusBusy(false); }
+  };
+
+  const fmtTime = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+
   // --- COPY WA ---
   const copyWA = () => {
     if (!activePO || poItems.length === 0) return;
@@ -256,6 +314,7 @@ export default function ScannerApp() {
 📌 *PO NUMBER:* ${activePO}
 📦 *BLEND:* ${poHeader?.blend_code || poItems[0].blend_code || '-'}
 👤 *PIC:* ${checkerName.trim() || 'Operator Gudang'}
+🔗 *GROUPING:* ${poStatus?.grouping_done ? '✅' : '⬜'} | *QC:* ${poStatus?.qc_done ? '✅' : '⬜'}
 
 📊 *PROGRESS OVERALL:* ${totalScanned.toFixed(1)} / ${totalTarget} CT (${pct}%)
 *BREAKDOWN LOT:*
@@ -278,7 +337,7 @@ _Reported via VCP-OP RF Scanner App_`;
 
   // Klik di area kosong -> fokus kembali ke input scan (kecuali sedang di modal / tab lain)
   const handleRootClick = (e: React.MouseEvent) => {
-    if (activeTab !== 'picking' || pendingScan || showLogs || showMon) return;
+    if (activeTab !== 'monitoring' || pendingScan || statusConfirm || showLogs || showMon) return;
     if ((e.target as HTMLElement).closest('button,select,input,textarea,a,label')) return;
     inputRef.current?.focus();
   };
@@ -306,7 +365,7 @@ _Reported via VCP-OP RF Scanner App_`;
           <h1 className="font-bold text-lg text-blue-900">VCP-OP RF Scanner</h1>
           <p className="text-xs text-gray-500">Warehouse Fulfillment System</p>
         </div>
-        <a href="/admin" className="text-xs font-bold text-blue-600 hover:underline">⚙️ Admin Portal</a>
+        <a href="https://order-vcp.akbarafriansyah.my.id/admin" className="text-xs font-bold text-blue-600 hover:underline">⚙️ Admin Portal</a>
       </header>
 
       {/* TOAST FEEDBACK (fixed di bawah, tinggi & kontras) */}
@@ -320,25 +379,37 @@ _Reported via VCP-OP RF Scanner App_`;
 
       {/* TABS NAVIGATION */}
       <div className="flex bg-white rounded-lg shadow-sm mb-4 overflow-hidden border border-gray-200">
-        <button
-          onClick={() => { setActiveTab('picking'); setTimeout(() => inputRef.current?.focus(), 0); }}
-          className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-2 transition ${activeTab === 'picking' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}
-        >
-          <Package size={16} /> 1. PICKING &amp; STAGING
+        <button onClick={() => changeTab('picking')}
+          className={`flex-1 py-3 text-[11px] font-bold flex items-center justify-center gap-1.5 transition ${activeTab === 'picking' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
+          <Package size={15} /> 1. PICKING
         </button>
-        <button
-          onClick={() => setActiveTab('loading')}
-          className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-2 transition ${activeTab === 'loading' ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600'}`}
-        >
-          <Truck size={16} /> 2. VALIDASI LOADING
+        <button onClick={() => changeTab('monitoring')}
+          className={`flex-1 py-3 text-[11px] font-bold flex items-center justify-center gap-1.5 transition ${activeTab === 'monitoring' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
+          <ClipboardCheck size={15} /> 2. MONITORING
         </button>
-        <a href="/dashboard" className="flex-1 py-3 text-xs font-bold flex items-center justify-center gap-2 bg-gray-100 text-gray-600 no-underline">
-          📊 3. DASHBOARD
+        <button onClick={() => changeTab('loading')}
+          className={`flex-1 py-3 text-[11px] font-bold flex items-center justify-center gap-1.5 transition ${activeTab === 'loading' ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600'}`}>
+          <Truck size={15} /> 3. LOADING
+        </button>
+        <a href="https://order-vcp.akbarafriansyah.my.id/dashboard" className="flex-1 py-3 text-[11px] font-bold flex items-center justify-center gap-1.5 bg-gray-100 text-gray-600 no-underline">
+          📊 DASHBOARD
         </a>
       </div>
 
-      {/* --- TAB: PICKING --- */}
-      {activeTab === 'picking' && (
+      {/* --- TAB: PICKING (summary per tanggal order, dibiarkan mounted supaya state tidak hilang) --- */}
+      <div className={activeTab === 'picking' ? '' : 'hidden'}>
+        <PickingTab
+          active={activeTab === 'picking'}
+          allOrders={allOrders}
+          whList={whList}
+          skuRef={skuRef}
+          checkerName={checkerName}
+          notify={notify}
+        />
+      </div>
+
+      {/* --- TAB: MONITORING (scan per PO, sebelumnya 'Picking & Staging') --- */}
+      {activeTab === 'monitoring' && (
         <>
           <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-3">
             <div className="flex justify-between items-center flex-wrap gap-2 mb-3">
@@ -427,6 +498,20 @@ _Reported via VCP-OP RF Scanner App_`;
                     <div className={`h-full transition-all ${pct >= 100 ? 'bg-green-700' : 'bg-gray-900'}`} style={{ width: `${pct}%` }} />
                   </div>
                 </div>
+                <div className="mt-3 border-t border-amber-200 pt-2 space-y-1">
+                  {(['grouping', 'qc'] as const).map(f => {
+                    const done = f === 'grouping' ? poStatus?.grouping_done : poStatus?.qc_done;
+                    const at = f === 'grouping' ? poStatus?.grouping_at : poStatus?.qc_at;
+                    const by = f === 'grouping' ? poStatus?.grouping_by : poStatus?.qc_by;
+                    return (
+                      <label key={f} className="flex items-center gap-3 min-h-11 cursor-pointer">
+                        <input type="checkbox" checked={!!done} onChange={() => requestStatus(f)} className="w-6 h-6 accent-gray-900 flex-none" />
+                        <span className="font-bold">{f === 'grouping' ? 'GROUPING' : 'QC'}</span>
+                        {done && <span className="text-xs text-green-800 ml-auto text-right">✅ {fmtTime(at)} • {by}</span>}
+                      </label>
+                    );
+                  })}
+                </div>
                 <button onClick={() => setShowMon(true)} className="mt-2 w-full min-h-10 rounded-md bg-amber-600 text-white text-xs font-bold">
                   📸 Monitoring Staging
                 </button>
@@ -503,11 +588,20 @@ _Reported via VCP-OP RF Scanner App_`;
           defaultWH={activeWH}
           checkerName={checkerName}
           notify={notify}
-          onDone={() => { setActiveTab('picking'); setTimeout(() => inputRef.current?.focus(), 0); }}
+          onDone={() => changeTab('monitoring')}
         />
       )}
 
       {/* --- MODALS --- */}
+      {statusConfirm && activePO && (
+        <StatusConfirmModal
+          label={statusConfirm.field === 'grouping' ? 'GROUPING' : 'QC'}
+          po={activePO} rit={activeRit} next={statusConfirm.next}
+          checkerName={checkerName} busy={statusBusy}
+          onConfirm={confirmStatus}
+          onCancel={() => { setStatusConfirm(null); inputRef.current?.focus(); }}
+        />
+      )}
       {pendingScan && <BypassModal message={pendingScan.message} onConfirm={confirmBypass} onCancel={cancelBypass} />}
       {showLogs && activePO && (
         <LogsModal
