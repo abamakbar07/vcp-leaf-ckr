@@ -365,7 +365,7 @@ _Reported via VCP-OP RF Scanner App_`;
           <h1 className="font-bold text-lg text-blue-900">VCP-OP RF Scanner</h1>
           <p className="text-xs text-gray-500">Warehouse Fulfillment System</p>
         </div>
-        <a href="https://order-vcp.akbarafriansyah.my.id/admin" className="text-xs font-bold text-blue-600 hover:underline">⚙️ Admin Portal</a>
+        <a href="/admin" className="text-xs font-bold text-blue-600 hover:underline">⚙️ Admin Portal</a>
       </header>
 
       {/* TOAST FEEDBACK (fixed di bawah, tinggi & kontras) */}
@@ -391,7 +391,7 @@ _Reported via VCP-OP RF Scanner App_`;
           className={`flex-1 py-3 text-[11px] font-bold flex items-center justify-center gap-1.5 transition ${activeTab === 'loading' ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600'}`}>
           <Truck size={15} /> 3. LOADING
         </button>
-        <a href="https://order-vcp.akbarafriansyah.my.id/dashboard" className="flex-1 py-3 text-[11px] font-bold flex items-center justify-center gap-1.5 bg-gray-100 text-gray-600 no-underline">
+        <a href="/dashboard" className="flex-1 py-3 text-[11px] font-bold flex items-center justify-center gap-1.5 bg-gray-100 text-gray-600 no-underline">
           📊 DASHBOARD
         </a>
       </div>
