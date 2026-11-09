@@ -24,7 +24,9 @@ export default function UploadPanel({ collector, notify }: Props) {
   const [checking, setChecking] = useState(false);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<Record<string, { s: FileState; msg?: string }>>({});
-  const [pickedAt, setPickedAt] = useState<Date>(new Date());
+//   const [pickedAt, setPickedAt] = useState<Date>(new Date());
+
+  const [pickedAt, setPickedAt] = useState<Date | null>(null);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const batchRef = useRef<{ prefix: string; iso: string; plan: ReturnType<typeof planPaths> } | null>(null);
@@ -148,7 +150,7 @@ export default function UploadPanel({ collector, notify }: Props) {
   const failedItems = sel ? queue.filter(f => status[f.id]?.s === 'error') : [];
   const finished = queue.length > 0 && counts.done === queue.length;
   const started = Object.keys(status).length > 0;
-  const examplePrefix = batchRef.current?.prefix ?? batchPrefix(pickedAt);
+  const examplePrefix = batchRef.current?.prefix ?? (pickedAt ? batchPrefix(pickedAt) : '');
 
   return (
     <div>
