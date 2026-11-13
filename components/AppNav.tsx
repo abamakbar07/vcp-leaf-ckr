@@ -2,11 +2,12 @@ import Link from 'next/link';
 
 const LINKS = [
   { key: 'scanner', href: '/scanner', label: '📱 RF Scanner' },
+  { key: 'inbound', href: '/inbound', label: '📥 Inbound' },
   { key: 'dashboard', href: '/dashboard', label: '📊 Dashboard' },
   { key: 'admin', href: '/admin', label: '⚙️ Admin' },
 ];
 
-export default function AppNav({ current, title, subtitle }: { current: 'scanner' | 'dashboard' | 'admin'; title: string; subtitle?: string }) {
+export default function AppNav({ current, title, subtitle }: { current: 'scanner' | 'dashboard' | 'admin' | 'inbound'; title: string; subtitle?: string }) {
   return (
     <header className="bg-white shadow-sm rounded-lg p-4 mb-4 flex flex-wrap justify-between items-center gap-3 border border-gray-200">
       <div>
