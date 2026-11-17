@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import { fetchPaged } from '@/lib/db';
 import { parseHMSBarcode, playAudio, triggerHaptic, getISOWeek } from '@/lib/utils';
 import type { ParsedBarcode } from '@/lib/utils';
 import { Package, Truck, ClipboardCheck } from 'lucide-react';
@@ -91,11 +92,15 @@ export default function ScannerApp() {
         skuRef.current = map;
       }
 
-      const { data: orderData, error: orderError } = await supabase.from('vcp-op-orders').select('*').order('arrival_date', { ascending: true });
-      if (orderError) { console.error('Error loading Orders:', orderError); notify(`Gagal load PO: ${orderError.message}`, 'error'); }
-      if (orderData) {
+      try {
+        const orderData = await fetchPaged<Order>((from, to) => supabase.from('vcp-op-orders').select('*')
+          .order('arrival_date', { ascending: true }).order('arrival_time').order('po_number').range(from, to));
         setAllOrders(orderData);
         setWhList(Array.from(new Set(orderData.map(d => d.wh_id || 'WH01'))));
+      } catch (error) {
+        console.error('Error loading Orders:', error);
+        const message = error instanceof Error ? error.message : String(error);
+        notify(`Gagal load PO: ${message}`, 'error');
       }
     }
     initData();
