@@ -2,6 +2,7 @@
 // lib/dashboardData.ts - ambil & hitung semua data dashboard untuk satu tanggal (+ filter WH)
 import { supabase } from './supabaseClient';
 import { fetchByPo, fetchPaged, whOf } from './db';
+import { DEFAULT_FUM_LIMIT, ibStaleness, loadCurrentSnapshot, loadFumigationLimit } from './inventory';
 
 export type Stage = 'OPEN' | 'GROUPING' | 'QC' | 'MONITORING' | 'READY' | 'LOADED';
 export type PickStatus = 'OPEN' | 'PARTIAL' | 'DONE' | 'OVER' | 'DI LUAR ORDER';
@@ -19,6 +20,7 @@ export interface PoRow {
   lots: LotLine[];
   stage: Stage;
   notes: string[];
+  fumExpired: number; fumUnknown: number; fumMaxAge: number;
 }
 
 export interface RitRow {
@@ -27,13 +29,18 @@ export interface RitRow {
   dispatch: { id: number; ritNumber: string; vehicle: string; photos: number; by: string | null } | null;
 }
 
-export interface LotRow { lot: string; target: number; picked: number; pickedBoxes: number; scanned: number; loaded: number; pickStatus: PickStatus }
+export interface LotRow {
+  lot: string; target: number; picked: number; pickedBoxes: number; scanned: number; loaded: number; pickStatus: PickStatus;
+  scanCt: number; manual: number; fumExpired: number; fumUnknown: number; manualFlag: string | null;
+}
 
-export interface PickingSummary { hasData: boolean; target: number; fulfilled: number; extra: number; boxes: number }
+export interface PickingSummary { hasData: boolean; target: number; fulfilled: number; extra: number; boxes: number; manual: number; fumExpired: number; fumUnknown: number }
+
+export interface IbInfo { hasSnapshot: boolean; asOf: string | null; stale: boolean; days: number; limit: number }
 
 export interface DashboardData {
   fetchedAt: Date; date: string; wh: string;
-  rows: PoRow[]; rits: RitRow[]; lots: LotRow[]; picking: PickingSummary;
+  rows: PoRow[]; rits: RitRow[]; lots: LotRow[]; picking: PickingSummary; ib: IbInfo;
   tableErrors: string[];
 }
 
@@ -68,22 +75,36 @@ export async function fetchDashboard(date: string, wh: string, sku: Map<string, 
 
   const dispatchIds = Array.from(new Set(orders.map(o => o.dispatch_id).filter(Boolean)));
 
-  const [items, logs, statuses, monitors, picks, sessions] = await Promise.all([
+  // Kolom fumigasi baru: kalau SQL belum dijalankan, ambil tanpa kolom itu supaya dashboard tetap tampil
+  const withFum = async <T,>(cols: string, run: (c: string) => Promise<T[]>): Promise<T[]> => {
+    try { return await run(`${cols}, fum_status, aging_days`); }
+    catch (e: any) { if (/fum_status|aging_days/.test(e?.message || '')) return run(cols); throw e; }
+  };
+
+  const [items, logs, statuses, monitors, picks, sessions, manualRows, fumLimit, snapshot] = await Promise.all([
     safe('order_items', () => fetchByPo<any>('vcp-op-order_items', 'po_number, arrival_time, lot_code, qty_usage_ct', poList, ['po_number', 'lot_code'])),
-    safe('scan_logs', () => fetchByPo<any>('vcp-op-scan_logs', 'po_number, arrival_time, lot_code, net_weight_kg, is_loaded, is_bypassed', poList, ['id'])),
+    safe('scan_logs', () => withFum<any>('po_number, arrival_time, lot_code, net_weight_kg, is_loaded, is_bypassed',
+      c => fetchByPo<any>('vcp-op-scan_logs', c, poList, ['id']))),
     safe('po_status', () => fetchByPo<any>('vcp-op-po_status', '*', poList, ['po_number'])),
     safe('staging_monitoring_logs', () => fetchByPo<any>('vcp-op-staging_monitoring_logs', '*', poList, ['po_number', 'arrival_time'])),
-    safe('picking_logs', () => fetchPaged<any>((f, t) => {
-      let q: any = supabase.from('vcp-op-picking_logs').select('wh_id, lot_code, net_weight_kg').eq('order_date', date);
+    safe('picking_logs', () => withFum<any>('wh_id, lot_code, net_weight_kg', c => fetchPaged<any>((f, t) => {
+      let q: any = supabase.from('vcp-op-picking_logs').select(c).eq('order_date', date);
       if (wh !== 'ALL') q = q.eq('wh_id', wh);
       return q.order('id').range(f, t);
-    })),
+    }))),
     safe<any>('dispatch_sessions', async () => {
       if (dispatchIds.length === 0) return [];
       const { data, error } = await supabase.from('vcp-op-outbound_dispatch_sessions').select('*').in('id', dispatchIds);
       if (error) throw error;
       return data || [];
     }),
+    safe('picking_manual', () => fetchPaged<any>((f, t) => {
+      let q: any = supabase.from('vcp-op-picking_manual').select('wh_id, lot_code, qty_ct, fum_flag, eligible_ct').eq('order_date', date).gt('qty_ct', 0);
+      if (wh !== 'ALL') q = q.eq('wh_id', wh);
+      return q.order('id').range(f, t);
+    })),
+    loadFumigationLimit().catch(() => DEFAULT_FUM_LIMIT),
+    loadCurrentSnapshot(),
   ]);
 
   // ---- index per PO + RIT ----
@@ -98,6 +119,7 @@ export async function fetchDashboard(date: string, wh: string, sku: Map<string, 
   type Agg = { ct: number; loadedCt: number; boxes: number; loadedBoxes: number };
   const scanByPo = new Map<string, Map<string, Agg>>();
   const bypassByPo = new Map<string, number>();
+  const fumByPo = new Map<string, { exp: number; unk: number; maxAge: number }>();
   logs.filter(l => pairSet.has(`${l.po_number}|${l.arrival_time}`)).forEach(l => {
     const k = `${l.po_number}|${l.arrival_time}`;
     const m = scanByPo.get(k) || new Map<string, Agg>();
@@ -108,6 +130,11 @@ export async function fetchDashboard(date: string, wh: string, sku: Map<string, 
     m.set(l.lot_code, a);
     scanByPo.set(k, m);
     if (l.is_bypassed) bypassByPo.set(k, (bypassByPo.get(k) || 0) + 1);
+    if (l.fum_status === 'EXPIRED' || l.fum_status === 'UNKNOWN' || l.fum_status === 'NOT_IN_IB') {
+      const f = fumByPo.get(k) || { exp: 0, unk: 0, maxAge: 0 };
+      if (l.fum_status === 'EXPIRED') { f.exp += 1; f.maxAge = Math.max(f.maxAge, Number(l.aging_days) || 0); } else f.unk += 1;
+      fumByPo.set(k, f);
+    }
   });
 
   const statusByPo = new Map<string, any>();
@@ -154,12 +181,16 @@ export async function fetchDashboard(date: string, wh: string, sku: Map<string, 
     const byp = bypassByPo.get(key) || 0;
     if (byp > 0) notes.push(`${byp} scan bypass (SN duplikat PO lain)`);
     if (boxes > 0 && loadedBoxes > 0 && loadedBoxes < boxes && stage === 'LOADED') notes.push('Loaded ≥ target tapi ada box belum divalidasi');
+    const fumInfo = fumByPo.get(key) || { exp: 0, unk: 0, maxAge: 0 };
+    if (fumInfo.exp > 0) notes.push(`${fumInfo.exp} box fumigasi > ${fumLimit} hari (maks ${fumInfo.maxAge} hr)`);
+    if (fumInfo.unk > 0) notes.push(`${fumInfo.unk} box tanpa data fumigasi / tidak ada di IB`);
 
     return {
       key, po: o.po_number, wh: whOf(o), date: o.arrival_date, rit: o.arrival_time || '-', blend: o.blend_code || '-', eta: o.arrival_time || '',
       target, scanned, loaded, boxes, loadedBoxes, bypassed: byp, grouping, qc,
       evidence: { has: !!mon, photos, kainMori: mon?.nomor_kain_mori || null, by: mon?.inspected_by || null },
       dispatchId: o.dispatch_id || null, lots, stage, notes,
+      fumExpired: fumInfo.exp, fumUnknown: fumInfo.unk, fumMaxAge: fumInfo.maxAge,
     };
   });
 
@@ -188,32 +219,55 @@ export async function fetchDashboard(date: string, wh: string, sku: Map<string, 
   items.filter(i => pairSet.has(`${i.po_number}|${i.arrival_time}`)).forEach(i => dateTarget.set(i.lot_code, (dateTarget.get(i.lot_code) || 0) + Number(i.qty_usage_ct)));
   const pickKg = new Map<string, number>();
   const pickBx = new Map<string, number>();
-  picks.forEach(p => { pickKg.set(p.lot_code, (pickKg.get(p.lot_code) || 0) + Number(p.net_weight_kg)); pickBx.set(p.lot_code, (pickBx.get(p.lot_code) || 0) + 1); });
+  const pickExp = new Map<string, number>();
+  const pickUnk = new Map<string, number>();
+  picks.forEach(p => {
+    pickKg.set(p.lot_code, (pickKg.get(p.lot_code) || 0) + Number(p.net_weight_kg)); pickBx.set(p.lot_code, (pickBx.get(p.lot_code) || 0) + 1);
+    if (p.fum_status === 'EXPIRED') pickExp.set(p.lot_code, (pickExp.get(p.lot_code) || 0) + 1);
+    else if (p.fum_status === 'UNKNOWN' || p.fum_status === 'NOT_IN_IB') pickUnk.set(p.lot_code, (pickUnk.get(p.lot_code) || 0) + 1);
+  });
+  const manQty = new Map<string, number>();
+  const manFlag = new Map<string, string>();
+  manualRows.forEach(m => {
+    manQty.set(m.lot_code, (manQty.get(m.lot_code) || 0) + Number(m.qty_ct));
+    if (m.fum_flag === 'EXCEEDS_ELIGIBLE') manFlag.set(m.lot_code, 'EXCEEDS_ELIGIBLE');
+    else if (m.fum_flag === 'NO_IB' && !manFlag.has(m.lot_code)) manFlag.set(m.lot_code, 'NO_IB');
+  });
   const monScanned = new Map<string, number>();
   const monLoaded = new Map<string, number>();
   rows.forEach(r => r.lots.forEach(l => { monScanned.set(l.lot, (monScanned.get(l.lot) || 0) + l.scanned); monLoaded.set(l.lot, (monLoaded.get(l.lot) || 0) + l.loaded); }));
 
-  const lotNames = Array.from(new Set([...dateTarget.keys(), ...pickKg.keys(), ...monScanned.keys()])).sort();
+  const lotNames = Array.from(new Set([...dateTarget.keys(), ...pickKg.keys(), ...manQty.keys(), ...monScanned.keys()])).sort();
   const lots: LotRow[] = lotNames.map(lot => {
     const target = r2(dateTarget.get(lot) || 0);
-    const picked = r2((pickKg.get(lot) || 0) / std(lot));
+    const scanCt = r2((pickKg.get(lot) || 0) / std(lot));
+    const manual = r2(manQty.get(lot) || 0);
+    const picked = r2(scanCt + manual); // picking = scan + isian manual
     let pickStatus: PickStatus;
     if (!dateTarget.has(lot)) pickStatus = 'DI LUAR ORDER';
     else if (picked > target + 0.05) pickStatus = 'OVER';
     else if (picked >= target - 0.05) pickStatus = 'DONE';
     else if (picked > 0) pickStatus = 'PARTIAL';
     else pickStatus = 'OPEN';
-    return { lot, target, picked, pickedBoxes: pickBx.get(lot) || 0, scanned: r2(monScanned.get(lot) || 0), loaded: r2(monLoaded.get(lot) || 0), pickStatus };
+    return {
+      lot, target, picked, pickedBoxes: pickBx.get(lot) || 0, scanned: r2(monScanned.get(lot) || 0), loaded: r2(monLoaded.get(lot) || 0), pickStatus,
+      scanCt, manual, fumExpired: pickExp.get(lot) || 0, fumUnknown: pickUnk.get(lot) || 0, manualFlag: manFlag.get(lot) || null,
+    };
   });
 
   const totalTarget = lots.reduce((s, l) => s + l.target, 0);
   const fulfilled = lots.filter(l => dateTarget.has(l.lot)).reduce((s, l) => s + Math.min(l.picked, l.target), 0);
   const extra = lots.reduce((s, l) => s + (dateTarget.has(l.lot) ? Math.max(0, l.picked - l.target) : l.picked), 0);
   const picking: PickingSummary = {
-    hasData: picks.length > 0, target: r2(totalTarget), fulfilled: r2(fulfilled), extra: r2(extra), boxes: picks.length,
+    hasData: picks.length > 0 || manualRows.length > 0, target: r2(totalTarget), fulfilled: r2(fulfilled), extra: r2(extra), boxes: picks.length,
+    manual: r2(lots.reduce((s, l) => s + l.manual, 0)),
+    fumExpired: lots.reduce((s, l) => s + l.fumExpired, 0), fumUnknown: lots.reduce((s, l) => s + l.fumUnknown, 0),
   };
 
-  return { fetchedAt: new Date(), date, wh, rows, rits, lots, picking, tableErrors };
+  const st = ibStaleness(snapshot?.as_of_date ?? null);
+  const ib: IbInfo = { hasSnapshot: !!snapshot, asOf: snapshot?.as_of_date ?? null, stale: st.stale, days: st.days, limit: fumLimit };
+
+  return { fetchedAt: new Date(), date, wh, rows, rits, lots, picking, ib, tableErrors };
 }
 
 // ---- peringatan "perlu perhatian" ----
@@ -222,6 +276,15 @@ export interface Alert { level: 'error' | 'warning'; text: string }
 export function buildAlerts(d: DashboardData, now = new Date()): Alert[] {
   const out: Alert[] = [];
   const today = now.toLocaleDateString('sv-SE'); // YYYY-MM-DD (waktu lokal perangkat)
+
+  // --- aturan fumigasi & Inventory Balance ---
+  if (!d.ib.hasSnapshot) out.push({ level: 'warning', text: 'Inventory Balance belum di-upload: pengecekan umur fumigasi tidak aktif' });
+  else if (d.ib.stale) out.push({ level: 'warning', text: `IB terakhir per ${d.ib.asOf} (${d.ib.days} hari lalu): update di Admin supaya pengecekan fumigasi akurat` });
+  d.lots.filter(l => l.fumExpired > 0).forEach(l => out.push({ level: 'error', text: `Picking: LOT ${l.lot} ada ${l.fumExpired} box fumigasi > ${d.ib.limit} hari` }));
+  d.rows.filter(r => r.fumExpired > 0).forEach(r => out.push({ level: 'error', text: `Monitoring PO ${r.po} (RIT ${r.rit}): ${r.fumExpired} box fumigasi > ${d.ib.limit} hari (maks ${r.fumMaxAge} hr)` }));
+  d.lots.filter(l => l.manualFlag === 'EXCEEDS_ELIGIBLE').forEach(l => out.push({ level: 'error', text: `Picking manual LOT ${l.lot} (${l.manual} CT): melebihi stok IB yang valid, ada material yang kemungkinan > ${d.ib.limit} hari` }));
+  const unk = d.lots.reduce((s, l) => s + l.fumUnknown, 0) + d.rows.reduce((s, r) => s + r.fumUnknown, 0);
+  if (unk > 0) out.push({ level: 'warning', text: `${unk} box (picking + monitoring) tanpa data fumigasi / tidak ada di IB` });
 
   d.lots.filter(l => l.pickStatus === 'DI LUAR ORDER').forEach(l => out.push({ level: 'error', text: `Picking: LOT ${l.lot} (${l.picked} CT) di luar order tanggal ini` }));
   d.lots.filter(l => l.pickStatus === 'OVER').forEach(l => out.push({ level: 'warning', text: `Picking: LOT ${l.lot} over ${r2(l.picked - l.target)} CT dari target` }));

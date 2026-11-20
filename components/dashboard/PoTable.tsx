@@ -39,12 +39,12 @@ export default function PoTable({ rows }: { rows: PoRow[] }) {
           <tr>
             <th className="p-2 text-left">PO</th><th className="p-2 text-left">RIT</th><th className="p-2 text-left">Blend</th>
             <th className="p-2 text-left">Monitoring Scan (CT)</th><th className="p-2 text-left">Loaded (CT)</th>
-            <th className="p-2 text-left">Grouping</th><th className="p-2 text-left">QC</th><th className="p-2 text-left">Evidence</th>
+            <th className="p-2 text-left">Grouping</th><th className="p-2 text-left">QC</th><th className="p-2 text-left">Fumigasi</th><th className="p-2 text-left">Evidence</th>
             <th className="p-2 text-center">Status</th>
           </tr>
         </thead>
         <tbody>
-          {rows.length === 0 && <tr><td colSpan={9} className="p-4 text-center text-gray-500">Tidak ada PO pada filter ini.</td></tr>}
+          {rows.length === 0 && <tr><td colSpan={10} className="p-4 text-center text-gray-500">Tidak ada PO pada filter ini.</td></tr>}
           {rows.map(r => (
             <Fragment key={r.key}>
               <tr onClick={() => toggle(r.key)} className="border-b cursor-pointer hover:bg-amber-50 align-top">
@@ -56,13 +56,18 @@ export default function PoTable({ rows }: { rows: PoRow[] }) {
                 <td className="p-2"><Tick {...r.grouping} /></td>
                 <td className="p-2"><Tick {...r.qc} /></td>
                 <td className="p-2 text-[11px]">
+                  {r.fumExpired > 0 ? <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-800 font-extrabold">✗ {r.fumExpired} &gt; batas</span>
+                    : r.fumUnknown > 0 ? <span className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-700 font-bold">? {r.fumUnknown}</span>
+                    : r.boxes > 0 ? <span className="text-green-700 font-extrabold">✓</span> : <span className="text-gray-300 font-bold">—</span>}
+                </td>
+                <td className="p-2 text-[11px]">
                   {r.evidence.has ? <><span className="font-bold">{r.evidence.kainMori || '-'}</span><div className={r.evidence.photos === 3 ? 'text-green-700' : 'text-orange-700'}>📷 {r.evidence.photos}/3</div></> : <span className="text-gray-300 font-bold">—</span>}
                 </td>
                 <td className="p-2 text-center"><span className={`inline-block px-2 py-1 rounded-md text-[11px] font-extrabold whitespace-nowrap ${STAGE_META[r.stage].cls}`}>{STAGE_META[r.stage].label}</span></td>
               </tr>
               {open.has(r.key) && (
                 <tr className="bg-gray-50 border-b">
-                  <td colSpan={9} className="p-3">
+                  <td colSpan={10} className="p-3">
                     {r.notes.length > 0 && <ul className="mb-2 text-orange-800 font-semibold space-y-0.5">{r.notes.map(n => <li key={n}>⚠ {n}</li>)}</ul>}
                     <table className="w-full max-w-xl text-[11px]">
                       <thead><tr className="text-gray-500"><th className="text-left p-1">LOT</th><th className="text-left p-1">Target</th><th className="text-left p-1">Scanned</th><th className="text-left p-1">Loaded</th><th className="text-left p-1">Sisa scan</th></tr></thead>

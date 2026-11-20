@@ -11,6 +11,7 @@ import SkuMasterSection from '@/components/admin/SkuMasterSection';
 import OrderImportSection from '@/components/admin/OrderImportSection';
 import ExportSection from '@/components/admin/ExportSection';
 import MasterOrdersSection from '@/components/admin/MasterOrdersSection';
+import InventoryImportSection from '@/components/admin/InventoryImportSection';
 
 export default function AdminPage() {
   const { notify, toast } = useToast();
@@ -18,6 +19,7 @@ export default function AdminPage() {
   const [orders, setOrders] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [checker, setChecker] = useState('');
 
   const loadSku = useCallback(async () => {
     const { data, error } = await supabase.from('vcp-op-sku_master').select('lot_code, std_net_weight_kg');
@@ -42,7 +44,7 @@ export default function AdminPage() {
     finally { setLoading(false); }
   }, [notify]);
 
-  useEffect(() => { loadSku(); loadMaster(); }, [loadSku, loadMaster]);
+  useEffect(() => { setChecker(localStorage.getItem('hms_checker_name') || ''); loadSku(); loadMaster(); }, [loadSku, loadMaster]);
 
   const existingKeys = useMemo(() => new Set(orders.map(o => `${o.po_number}___${o.arrival_time}`)), [orders]);
 
@@ -50,6 +52,7 @@ export default function AdminPage() {
     <div className="max-w-4xl mx-auto p-4 bg-gray-50 min-h-screen text-sm">
       <AppNav current="admin" title="Admin Portal" subtitle="Order & SKU VCP-OP" />
       {toast}
+      <InventoryImportSection checker={checker} notify={notify} />
       <SkuMasterSection skuMap={skuMap} onSaved={loadSku} notify={notify} />
       <OrderImportSection skuMap={skuMap} existingKeys={existingKeys} onSaved={loadMaster} notify={notify} />
       <ExportSection orders={orders} notify={notify} />
