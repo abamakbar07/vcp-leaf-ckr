@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { fetchPaged } from '@/lib/db';
 import AppNav from '@/components/AppNav';
@@ -52,11 +52,13 @@ export default function AdminPage() {
     <div className="max-w-4xl mx-auto p-4 bg-gray-50 min-h-screen text-sm">
       <AppNav current="admin" title="Admin Portal" subtitle="Order & SKU VCP-OP" />
       {toast}
-      <InventoryImportSection checker={checker} notify={notify} />
-      <SkuMasterSection skuMap={skuMap} onSaved={loadSku} notify={notify} />
-      <OrderImportSection skuMap={skuMap} existingKeys={existingKeys} onSaved={loadMaster} notify={notify} />
-      <ExportSection orders={orders} notify={notify} />
-      <MasterOrdersSection orders={orders} items={items} loading={loading} onReload={loadMaster} notify={notify} />
+      <Suspense fallback={<div className="p-4 text-gray-400">Memuat halaman admin...</div>}>
+        <InventoryImportSection checker={checker} notify={notify} />
+        <SkuMasterSection skuMap={skuMap} onSaved={loadSku} notify={notify} />
+        <OrderImportSection skuMap={skuMap} existingKeys={existingKeys} onSaved={loadMaster} notify={notify} />
+        <ExportSection orders={orders} notify={notify} />
+        <MasterOrdersSection orders={orders} items={items} loading={loading} onReload={loadMaster} notify={notify} />
+      </Suspense>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { readFirstSheet } from '@/lib/excel';
 import {
@@ -107,6 +107,7 @@ export default function InventoryImportSection({ checker, notify }: Props) {
 
   return (
     <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-4">
+      <Suspense fallback={<div className="p-4 text-gray-400">Memuat data IB...</div>}>  
       <h2 className="font-bold text-base text-gray-900 mb-2">Inventory Balance (WMS) &amp; Aturan Fumigasi</h2>
 
       {/* STATUS IB AKTIF */}
@@ -210,6 +211,7 @@ export default function InventoryImportSection({ checker, notify }: Props) {
           </div>
         </div>
       )}
+    </Suspense>
     </section>
   );
 }

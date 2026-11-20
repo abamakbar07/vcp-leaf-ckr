@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { writeWorkbook } from '@/lib/excel';
 import AppNav from '@/components/AppNav';
@@ -19,7 +19,8 @@ export default function InventoryPage() {
   const { notify, toast } = useToast();
   const [meta, setMeta] = useState<SnapshotMeta | null>(null);
   const [limit, setLimit] = useState(DEFAULT_FUM_LIMIT);
-  const [delivery, setDelivery] = useState(todayIso());
+  const [today, setToday] = useState('');
+  const [delivery, setDelivery] = useState('');
   const [rows, setRows] = useState<SumRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [customer, setCustomer] = useState('');
@@ -31,16 +32,20 @@ export default function InventoryPage() {
   const [snRows, setSnRows] = useState<DetailRow[] | null>(null);
 
   useEffect(() => {
+    const now = todayIso();
+    setToday(now);
+    setDelivery(now);
     loadCurrentSnapshot().then(setMeta);
     loadFumigationLimit().then(setLimit);
   }, []);
 
   const load = useCallback(async () => {
+    if (!delivery) return;
     setLoading(true); setOpen(null); setDetail({});
     try {
-      const { data, error } = await supabase.rpc('inventory_summary', { p_delivery: delivery, p_limit: limit });
-      if (error) throw error;
-      setRows((data || []).map((r: any) => ({ ...r, total_avail: Number(r.total_avail), eligible: Number(r.eligible), expired: Number(r.expired), no_date: Number(r.no_date), locations: Number(r.locations) })));
+        const { data, error } = await supabase.rpc('inventory_summary', { p_delivery: delivery, p_limit: limit });
+        if (error) throw error;
+        setRows((data || []).map((r: any) => ({ ...r, total_avail: Number(r.total_avail), eligible: Number(r.eligible), expired: Number(r.expired), no_date: Number(r.no_date), locations: Number(r.locations) })));
     } catch (err: any) { notify(`❌ Gagal memuat stok (SQL sudah dijalankan?): ${err.message}`, 'error'); }
     finally { setLoading(false); }
   }, [delivery, limit, notify]);
@@ -110,7 +115,7 @@ export default function InventoryPage() {
     rows: filtered.map(r => ({ Customer: r.customer_id, SKU: r.sku, Deskripsi: r.sku_desc, 'Stok tersedia': r.total_avail, [`Valid (<=${limit} hr)`]: r.eligible, [`> ${limit} hr`]: r.expired, 'Tanpa tgl fumigasi': r.no_date, 'Jumlah lokasi': r.locations })),
   }], `Stok_IB_${meta?.as_of_date ?? 'x'}_kirim_${delivery}.xlsx`);
 
-  const stale = ibStaleness(meta?.as_of_date ?? null);
+  const stale = ibStaleness(meta?.as_of_date ?? null, today);
   const inp = 'w-full min-h-10 border border-gray-300 rounded-md p-2 bg-white font-semibold text-sm';
   const lbl = 'block text-xs font-bold text-gray-500 mb-1';
 
@@ -118,7 +123,7 @@ export default function InventoryPage() {
     <div className="max-w-6xl mx-auto p-4 bg-gray-50 min-h-screen text-sm">
       <AppNav current="inventory" title="Stok Inventory Balance (IB)" subtitle="Referensi stok & umur fumigasi dari WMS" />
       {toast}
-
+      <Suspense fallback={<div className="p-4 text-gray-400">Memuat halaman stok IB...</div>}>
       <div className={`rounded-lg border p-3 mb-4 text-sm ${meta ? (stale.stale ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200') : 'bg-amber-50 border-amber-200'}`}>
         {meta ? (
           <>
@@ -220,6 +225,7 @@ export default function InventoryPage() {
           </tbody>
         </table>
       </div>
+      </Suspense>
     </div>
   );
 }

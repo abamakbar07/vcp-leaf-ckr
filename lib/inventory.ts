@@ -49,6 +49,7 @@ export function daysBetween(fromIso: string, toIsoStr: string): number {
 
 export function ibStaleness(asOf: string | null, today = todayIso()): { stale: boolean; days: number } {
   if (!asOf) return { stale: true, days: 999 };
+  if (!today) return { stale: false, days: 0 };
   const days = daysBetween(asOf, today);
   return { stale: days > IB_STALE_DAYS, days };
 }
