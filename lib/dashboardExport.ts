@@ -12,11 +12,16 @@ export async function exportDashboardExcel(data: DashboardData, rows: PoRow[], r
   const poList = Array.from(new Set(rows.map(r => r.po)));
   const inScope = (po: string, rit: string) => rows.some(r => r.po === po && (r.rit === rit || (r.rit === '-' && !rit)));
 
-  const [logs, staging, picks] = await Promise.all([
+  const [logs, staging, picks, manualRows] = await Promise.all([
     fetchByPo<any>('vcp-op-scan_logs', '*', poList, ['id']),
     fetchByPo<any>('vcp-op-staging_monitoring_logs', '*', poList, ['po_number', 'arrival_time']),
     fetchPaged<any>((f, to) => {
       let q: any = supabase.from('vcp-op-picking_logs').select('*').eq('order_date', data.date);
+      if (data.wh !== 'ALL') q = q.eq('wh_id', data.wh);
+      return q.order('id').range(f, to);
+    }).catch(() => [] as any[]),
+    fetchPaged<any>((f, to) => {
+      let q: any = supabase.from('vcp-op-picking_manual').select('*').eq('order_date', data.date).gt('qty_ct', 0);
       if (data.wh !== 'ALL') q = q.eq('wh_id', data.wh);
       return q.order('id').range(f, to);
     }).catch(() => [] as any[]),
@@ -36,11 +41,12 @@ export async function exportDashboardExcel(data: DashboardData, rows: PoRow[], r
     'Grouping': r.grouping.done ? 'DONE' : '-', 'Grouping At': t(r.grouping.at), 'Grouping By': r.grouping.by || '-',
     'QC': r.qc.done ? 'DONE' : '-', 'QC At': t(r.qc.at), 'QC By': r.qc.by || '-',
     'No. Mori': r.evidence.kainMori || '-', 'Foto Monitoring': `${r.evidence.photos}/3`,
+    'Box Fumigasi > Batas': r.fumExpired, 'Box Tanpa Data Fumigasi': r.fumUnknown,
     'Status': STAGE_LABEL[r.stage], 'Catatan': r.notes.join('; '),
   }));
 
   const perLot = data.lots.map(l => ({
-    'LOT': l.lot, 'Target Tanggal (CT)': l.target, 'Picking (CT)': l.picked, 'Picking (Box)': l.pickedBoxes,
+    'LOT': l.lot, 'Target Tanggal (CT)': l.target, 'Picking Total (CT)': l.picked, 'Picking Scan (CT)': l.scanCt, 'Picking Manual (CT)': l.manual, 'Picking (Box)': l.pickedBoxes, 'Box Fumigasi > Batas (picking)': l.fumExpired,
     'Selisih Picking (CT)': +(l.picked - l.target).toFixed(2), 'Monitoring Scan (CT)': l.scanned, 'Loaded (CT)': l.loaded, 'Status Picking': l.pickStatus,
   }));
 
@@ -55,6 +61,7 @@ export async function exportDashboardExcel(data: DashboardData, rows: PoRow[], r
     'PMRUN': l.pmi_run_no, 'CASE ID': l.case_number, 'Net Wt (Kg)': l.net_weight_kg, 'Bypass': l.is_bypassed ? 'YES' : 'NO',
     'Scanned At': t(l.scanned_at), 'Scanned By': l.scanned_by || '-',
     'Status Loading': l.is_loaded ? 'LOADED' : 'PENDING', 'Loaded At': t(l.loaded_at), 'Loaded By': l.loaded_by || '-',
+    'Tgl Fumigasi': l.fumigation_date || '-', 'Umur Fumigasi (hr)': l.aging_days ?? '-', 'Status Fumigasi': l.fum_status || '-',
   }));
 
   const stagingRows = staging.filter(m => inScope(m.po_number, m.arrival_time)).map(m => ({
@@ -73,6 +80,7 @@ export async function exportDashboardExcel(data: DashboardData, rows: PoRow[], r
   const pickRows = picks.map((p: any) => ({
     'WH': p.wh_id, 'Tanggal Order': p.order_date, 'LOT': p.lot_code, 'PMRUN': p.pmi_run_no, 'CASE ID': p.case_number,
     'Serial Number': p.serial_number, 'Net Wt (Kg)': p.net_weight_kg, 'Scanned At': t(p.scanned_at), 'Scanned By': p.scanned_by,
+    'Tgl Fumigasi': p.fumigation_date || '-', 'Umur Fumigasi (hr)': p.aging_days ?? '-', 'Status Fumigasi': p.fum_status || '-',
   }));
 
   await writeWorkbook([
@@ -83,5 +91,6 @@ export async function exportDashboardExcel(data: DashboardData, rows: PoRow[], r
     { name: '5. Staging Evidence', rows: stagingRows },
     { name: '6. Armada Dispatch', rows: dispatchRows },
     { name: '7. Picking Logs', rows: pickRows },
+    { name: '8. Picking Manual', rows: manualRows.map((m: any) => ({ 'WH': m.wh_id, 'Tanggal Order': m.order_date, 'LOT': m.lot_code, 'Qty Manual (CT)': m.qty_ct, 'Stok Valid IB saat input (CT)': m.eligible_ct ?? '-', 'Flag Fumigasi': m.fum_flag || '-', 'Diinput Oleh': m.updated_by, 'Waktu': t(m.updated_at) })) },
   ], `Laporan_Lengkap_VCPOP_${data.date}_${data.wh}_RIT-${ritFilter.replace(/:/g, '')}.xlsx`);
 }

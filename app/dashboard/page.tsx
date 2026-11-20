@@ -149,10 +149,21 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* STATUS INVENTORY BALANCE */}
+      {data && (
+        <div className={`rounded-lg border px-3 py-2 mb-4 text-xs flex flex-wrap justify-between gap-2 ${!data.ib.hasSnapshot ? 'bg-amber-50 border-amber-200 text-amber-900' : data.ib.stale ? 'bg-red-50 border-red-200 text-red-800' : 'bg-green-50 border-green-200 text-green-900'}`}>
+          <span className="font-semibold">
+            {!data.ib.hasSnapshot ? '📦 IB belum di-upload: pengecekan umur fumigasi tidak aktif'
+              : `📦 IB per ${data.ib.asOf?.split('-').reverse().join('-')} · batas fumigasi ${data.ib.limit} hari sampai tanggal pengiriman${data.ib.stale ? ` · ⚠️ ${data.ib.days} hari tidak di-update` : ''}`}
+          </span>
+          <a href="/inventory" className="font-bold underline">Lihat stok IB →</a>
+        </div>
+      )}
+
       {/* SCORECARD */}
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 mb-4">
-        <Card title="1. Picking (per tanggal)" sub={p?.hasData ? `${p.boxes} box di-scan` : 'belum ada scan picking'} value={`${p?.fulfilled ?? 0}`} total={`${p?.target ?? 0} CT`}
-          pct={pctOf(p?.fulfilled ?? 0, p?.target ?? 0)} color="#3182ce" note={p && p.extra > 0.05 ? `+${p.extra} CT lebih/di luar order` : undefined} />
+        <Card title="1. Picking (per tanggal)" sub={p?.hasData ? `${p.boxes} box scan${p.manual > 0 ? ` + ${p.manual} CT manual` : ''}` : 'belum ada scan picking'} value={`${p?.fulfilled ?? 0}`} total={`${p?.target ?? 0} CT`}
+          pct={pctOf(p?.fulfilled ?? 0, p?.target ?? 0)} color="#3182ce" note={p && p.fumExpired > 0 ? `${p.fumExpired} box fumigasi > ${data?.ib.limit} hr` : p && p.extra > 0.05 ? `+${p.extra} CT lebih/di luar order` : undefined} />
         <Card title="2. Grouping" sub="PO selesai" value={`${sum.grouping}`} total={`${rows.length} PO`} pct={pctOf(sum.grouping, rows.length)} color="#0e7490" />
         <Card title="3. QC" sub="PO selesai" value={`${sum.qc}`} total={`${rows.length} PO`} pct={pctOf(sum.qc, rows.length)} color="#6366f1" />
         <Card title="4. Monitoring Scan" sub="CT ter-scan" value={`${+sum.scanned.toFixed(1)}`} total={`${+sum.target.toFixed(1)} CT`} pct={pctOf(sum.scanned, sum.target)} color="#1b1b1d" />

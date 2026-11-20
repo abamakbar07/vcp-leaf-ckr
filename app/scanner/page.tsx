@@ -4,7 +4,6 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-import { fetchPaged } from '@/lib/db';
 import { parseHMSBarcode, playAudio, triggerHaptic, getISOWeek } from '@/lib/utils';
 import type { ParsedBarcode } from '@/lib/utils';
 import { Package, Truck, ClipboardCheck } from 'lucide-react';
@@ -14,6 +13,7 @@ import MonitoringModal from '@/components/scanner/MonitoringModal';
 import LoadingTab from '@/components/scanner/LoadingTab';
 import PickingTab from '@/components/scanner/PickingTab';
 import StatusConfirmModal from '@/components/scanner/StatusConfirmModal';
+import { DEFAULT_FUM_LIMIT, IbCache, checkFumigation, fmtDate, ibStaleness, loadFumigationLimit, type FumCheck, type SnapshotMeta } from '@/lib/inventory';
 import type { FeedbackType, Notify, Order, OrderItem, PoStatus } from '@/components/scanner/types';
 
 type ValidBarcode = Extract<ParsedBarcode, { isValid: true }>;
@@ -45,6 +45,12 @@ export default function ScannerApp() {
   const [poItems, setPoItems] = useState<OrderItem[]>([]);
   const poItemsRef = useRef<OrderItem[]>([]); // dibaca saat scan (hindari state basi)
   const skuRef = useRef<Map<string, number>>(new Map());
+  const ibRef = useRef(new IbCache()); // Inventory Balance per LOT (cek umur fumigasi dari memori, tanpa query per scan)
+  const ibKeyRef = useRef('');
+  const [ibMeta, setIbMeta] = useState<SnapshotMeta | null>(null);
+  const [ibTick, setIbTick] = useState(0);
+  const [fumLimit, setFumLimit] = useState(DEFAULT_FUM_LIMIT);
+  const fumLimitRef = useRef(DEFAULT_FUM_LIMIT);
 
   // --- STATES UI ---
   const [isManual, setIsManual] = useState(false);
@@ -55,7 +61,7 @@ export default function ScannerApp() {
   const [poStatus, setPoStatus] = useState<PoStatus | null>(null);
   const [statusConfirm, setStatusConfirm] = useState<{ field: 'grouping' | 'qc'; next: boolean } | null>(null);
   const [statusBusy, setStatusBusy] = useState(false);
-  const [pendingScan, setPendingScan] = useState<{ parsed: ValidBarcode; po: string; rit: string; message: string } | null>(null);
+  const [pendingScan, setPendingScan] = useState<{ parsed: ValidBarcode; po: string; rit: string; title?: string; message: string; isBypassed: boolean; fum: FumCheck | null } | null>(null);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
 
   // --- FEEDBACK: suara + getar + flash + toast ---
@@ -80,6 +86,8 @@ export default function ScannerApp() {
   // --- EFFECT AWAL: nama checker, SKU master, orders ---
   useEffect(() => {
     setCheckerName(localStorage.getItem('hms_checker_name') || '');
+    loadFumigationLimit().then(n => { fumLimitRef.current = n; setFumLimit(n); });
+    ibRef.current.loadMeta().then(m => setIbMeta(m));
     const lastTab = localStorage.getItem('scanner_last_tab');
     if (lastTab === 'picking' || lastTab === 'monitoring' || lastTab === 'loading') setActiveTab(lastTab);
 
@@ -92,15 +100,11 @@ export default function ScannerApp() {
         skuRef.current = map;
       }
 
-      try {
-        const orderData = await fetchPaged<Order>((from, to) => supabase.from('vcp-op-orders').select('*')
-          .order('arrival_date', { ascending: true }).order('arrival_time').order('po_number').range(from, to));
+      const { data: orderData, error: orderError } = await supabase.from('vcp-op-orders').select('*').order('arrival_date', { ascending: true });
+      if (orderError) { console.error('Error loading Orders:', orderError); notify(`Gagal load PO: ${orderError.message}`, 'error'); }
+      if (orderData) {
         setAllOrders(orderData);
         setWhList(Array.from(new Set(orderData.map(d => d.wh_id || 'WH01'))));
-      } catch (error) {
-        console.error('Error loading Orders:', error);
-        const message = error instanceof Error ? error.message : String(error);
-        notify(`Gagal load PO: ${message}`, 'error');
       }
     }
     initData();
@@ -139,6 +143,14 @@ export default function ScannerApp() {
       });
       applyItems(processed);
 
+      // Inventory Balance untuk LOT di PO ini (sekali per PO + RIT; gagal = scan tetap jalan tanpa cek fumigasi)
+      const ibKey = `${po}|${rit}`;
+      if (ibKeyRef.current !== ibKey) {
+        ibKeyRef.current = ibKey;
+        try { await ibRef.current.ensureLots(processed.map(i => i.lot_code)); setIbTick(t => t + 1); }
+        catch (e) { console.error('Load IB:', e); ibKeyRef.current = ''; }
+      }
+
       // Status Grouping & QC (kalau tabel belum dibuat, cukup log error, scan tetap jalan)
       const hdr = allOrders.find(o => o.po_number === po && ritOf(o) === rit);
       const { data: st, error: stErr } = await supabase.from('vcp-op-po_status').select('*')
@@ -151,7 +163,7 @@ export default function ScannerApp() {
   }, [allOrders, applyItems, notify]);
 
   // --- HANDLER DROPDOWN (reset berjenjang, tabel LOT ikut dikosongkan) ---
-  const resetPO = () => { setActivePO(''); applyItems([]); setPoStatus(null); };
+  const resetPO = () => { setActivePO(''); applyItems([]); setPoStatus(null); ibKeyRef.current = ''; };
   const onWH = (v: string) => { setActiveWH(v); setActiveWeek(''); setActiveDate(''); setActiveRit(''); resetPO(); };
   const onWeek = (v: string) => { setActiveWeek(v); setActiveDate(''); setActiveRit(''); resetPO(); };
   const onDate = (v: string) => { setActiveDate(v); setActiveRit(''); resetPO(); };
@@ -182,17 +194,29 @@ export default function ScannerApp() {
   };
 
   // --- SIMPAN SCAN ---
-  const executeSaveScan = useCallback(async (parsed: ValidBarcode, po: string, rit: string, isBypassed: boolean) => {
+  const executeSaveScan = useCallback(async (parsed: ValidBarcode, po: string, rit: string, isBypassed: boolean, fum: FumCheck | null) => {
     try {
-      const { error } = await supabase.from('vcp-op-scan_logs').insert([{
+      const base = {
         po_number: po, arrival_time: rit, serial_number: parsed.serialNumber,
         lot_code: parsed.lotCode, pmi_run_no: parsed.pmiRunNo, case_number: parsed.caseNo,
         gross_weight_kg: parsed.grossWeight, net_weight_kg: parsed.netWeight,
         moisture: parsed.moisture, grade_code: parsed.gradeCode,
         is_bypassed: isBypassed, scanned_by: checkerName.trim() || 'anon',
-      }]);
+      };
+      const full = { ...base, fumigation_date: fum?.fumDate ?? null, aging_days: fum?.ageDays ?? null, fum_status: fum?.status ?? null };
+      let { error } = await supabase.from('vcp-op-scan_logs').insert([full]);
+      let sqlMissing = false;
+      // Kolom fumigasi belum ada (SQL belum dijalankan): jangan hentikan operasional, simpan tanpa catatan fumigasi
+      if (error && /fum_status|fumigation_date|aging_days/.test(error.message)) {
+        sqlMissing = true;
+        ({ error } = await supabase.from('vcp-op-scan_logs').insert([base]));
+      }
       if (error) throw error;
-      notify(`✅ [${parsed.lotCode}] SN OK!`, 'success');
+
+      if (sqlMissing) notify(`⚠️ [${parsed.lotCode}] tersimpan, tapi kolom fumigasi belum ada di database (jalankan SQL inventory).`, 'warning');
+      else if (fum?.status === 'EXPIRED') notify(`⚠️ [${parsed.lotCode}] tersimpan: fumigasi > ${fumLimitRef.current} hari (${fum.ageDays} hr)`, 'warning');
+      else if (fum?.status === 'UNKNOWN' || fum?.status === 'NOT_IN_IB') notify(`⚠️ [${parsed.lotCode}] OK, tapi ${fum.message}`, 'warning');
+      else notify(`✅ [${parsed.lotCode}] SN OK!`, 'success');
       await loadPODetails(po, rit);
     } catch (err: any) {
       notify(`❌ DB Save Error: ${err.message}`, 'error');
@@ -218,6 +242,8 @@ export default function ScannerApp() {
       return notify(`❌ OVER PICKING! LOT [${parsed.lotCode}] sudah FULFILLED!`, 'error');
     }
 
+    const reasons: string[] = [];
+    let isBypassed = false;
     try {
       const { data: existing, error } = await supabase
         .from('vcp-op-scan_logs').select('po_number, arrival_time').eq('serial_number', parsed.serialNumber);
@@ -228,19 +254,34 @@ export default function ScannerApp() {
           return notify('❌ DUPLICATE SN! Barcode SUDAH DI-SCAN pada PO/RIT ini!', 'error');
         }
         // SN ada di PO lain -> hanya peringatan, operator boleh bypass
-        notify('⚠️ SN sudah pernah di-scan di PO lain', 'warning');
-        setPendingScan({
-          parsed, po, rit,
-          message: `SN [${parsed.serialNumber}] SUDAH DI-SCAN di PO [${existing[0].po_number}] Jam [${existing[0].arrival_time}]. Tetap masukkan ke sini?`,
-        });
-        return;
+        reasons.push(`SN [${parsed.serialNumber}] SUDAH DI-SCAN di PO [${existing[0].po_number}] Jam [${existing[0].arrival_time}].`);
+        isBypassed = true;
       }
     } catch (err: any) {
       return notify(`❌ DB Error: ${err.message}`, 'error');
     }
 
-    await executeSaveScan(parsed, po, rit, false);
-  }, [executeSaveScan, notify]);
+    // Aturan fumigasi: umur fumigasi sampai tanggal pengiriman (arrival_date PO) tidak boleh melebihi batas
+    let fum: FumCheck | null = null;
+    if (ibRef.current.meta) {
+      try { await ibRef.current.ensureLots([parsed.lotCode]); } catch (e) { console.error('ensure IB:', e); }
+      const order = allOrders.find(o => o.po_number === po && ritOf(o) === rit);
+      if (order?.arrival_date) fum = checkFumigation(ibRef.current.lookup(parsed.serialNumber), order.arrival_date, fumLimitRef.current);
+    }
+    if (fum?.status === 'EXPIRED') reasons.push(`FUMIGASI MELEBIHI BATAS ${fumLimitRef.current} HARI\n${fum.message}`);
+
+    if (reasons.length > 0) {
+      notify(fum?.status === 'EXPIRED' ? '⚠️ Fumigasi melebihi batas!' : '⚠️ SN sudah pernah di-scan di PO lain', 'warning');
+      setPendingScan({
+        parsed, po, rit, isBypassed, fum,
+        title: fum?.status === 'EXPIRED' ? `⚠️ FUMIGASI > ${fumLimitRef.current} HARI` : undefined,
+        message: `${reasons.join('\n\n')}\n\nTetap masukkan?`,
+      });
+      return;
+    }
+
+    await executeSaveScan(parsed, po, rit, false, fum);
+  }, [allOrders, executeSaveScan, notify]);
 
   // Baca nilai langsung dari input (bukan state) + antrekan scan supaya tidak balapan
   const handleScan = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -257,9 +298,9 @@ export default function ScannerApp() {
 
   const confirmBypass = useCallback(async () => {
     if (!pendingScan) return;
-    const { parsed, po, rit } = pendingScan;
+    const { parsed, po, rit, isBypassed, fum } = pendingScan;
     setPendingScan(null);
-    await executeSaveScan(parsed, po, rit, true);
+    await executeSaveScan(parsed, po, rit, isBypassed, fum);
     inputRef.current?.focus();
   }, [pendingScan, executeSaveScan]);
 
@@ -370,7 +411,10 @@ _Reported via VCP-OP RF Scanner App_`;
           <h1 className="font-bold text-lg text-blue-900">VCP-OP RF Scanner</h1>
           <p className="text-xs text-gray-500">Warehouse Fulfillment System</p>
         </div>
-        <a href="/admin" className="text-xs font-bold text-blue-600 hover:underline">⚙️ Admin Portal</a>
+        <div className="flex gap-3">
+          <a href="/inventory" className="text-xs font-bold text-blue-600 hover:underline">📦 Stok IB</a>
+          <a href="/admin" className="text-xs font-bold text-blue-600 hover:underline">⚙️ Admin Portal</a>
+        </div>
       </header>
 
       {/* TOAST FEEDBACK (fixed di bawah, tinggi & kontras) */}
@@ -517,6 +561,31 @@ _Reported via VCP-OP RF Scanner App_`;
                     );
                   })}
                 </div>
+                {ibMeta && poHeader?.arrival_date && (
+                  <details className="mt-3 border-t border-amber-200 pt-2" data-tick={ibTick}>
+                    <summary className="cursor-pointer text-xs font-bold text-gray-700">
+                      📦 Stok IB per {fmtDate(ibMeta.as_of_date)} · valid ≤{fumLimit} hr s/d kirim {fmtDate(poHeader.arrival_date)}
+                      {ibStaleness(ibMeta.as_of_date).stale && <span className="ml-1 text-red-700">⚠️ IB basi</span>}
+                    </summary>
+                    <table className="w-full text-[11px] mt-1">
+                      <thead><tr className="text-gray-500"><th className="text-left p-1">LOT</th><th className="text-left p-1">Stok</th><th className="text-left p-1">Valid</th><th className="text-left p-1">&gt;{fumLimit}hr</th><th className="text-left p-1">Tanpa tgl</th></tr></thead>
+                      <tbody>
+                        {poItems.map(i => {
+                          const st = ibRef.current.stock(i.lot_code, poHeader.arrival_date, fumLimit);
+                          const need = Number(i.qty_usage_ct) - (i.scanned_ct || 0);
+                          return (
+                            <tr key={i.lot_code} className="border-t border-amber-100">
+                              <td className="p-1 font-bold">{i.lot_code}</td><td className="p-1">{st.total}</td>
+                              <td className={`p-1 font-bold ${st.eligible + 0.05 < need ? 'text-red-600' : 'text-green-700'}`}>{st.eligible}</td>
+                              <td className="p-1">{st.expired}</td><td className="p-1">{st.noDate}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <p className="text-[10px] text-gray-500 mt-1">Merah = stok valid kurang dari sisa kebutuhan LOT ini.</p>
+                  </details>
+                )}
                 <button onClick={() => setShowMon(true)} className="mt-2 w-full min-h-10 rounded-md bg-amber-600 text-white text-xs font-bold">
                   📸 Monitoring Staging
                 </button>
@@ -607,7 +676,7 @@ _Reported via VCP-OP RF Scanner App_`;
           onCancel={() => { setStatusConfirm(null); inputRef.current?.focus(); }}
         />
       )}
-      {pendingScan && <BypassModal message={pendingScan.message} onConfirm={confirmBypass} onCancel={cancelBypass} />}
+      {pendingScan && <BypassModal title={pendingScan.title} message={pendingScan.message} onConfirm={confirmBypass} onCancel={cancelBypass} />}
       {showLogs && activePO && (
         <LogsModal
           po={activePO} rit={activeRit} notify={notify}
