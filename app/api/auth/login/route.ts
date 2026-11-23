@@ -4,7 +4,7 @@ import { verifyPin, isValidPinFormat } from '@/lib/auth/crypto';
 import { createUserSession, getRequestMetadata, logAuditEvent } from '@/lib/auth/session';
 import { ROLE_DEFAULT_HOME, UserRole } from '@/lib/auth/rbac';
 
-export const runtime = 'nodejs';
+// export const runtime = 'nodejs';
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
@@ -29,9 +29,8 @@ export async function POST(request: Request) {
       .ilike('user_id', rawUserId)
       .maybeSingle();
 
-    // Constant-time rejection when user does not exist
     if (!user) {
-      await verifyPin(pin, null);
+      verifyPin(pin, null);
       await logAuditEvent({
         actorUserId: rawUserId,
         eventType: 'LOGIN_FAILED',
@@ -54,7 +53,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Check active brute-force lockout
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
       const remainingMs = new Date(user.locked_until).getTime() - Date.now();
       const remainingMin = Math.ceil(remainingMs / 60000);
@@ -66,7 +64,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const isValid = await verifyPin(pin, user.pin_hash);
+    const isValid = verifyPin(pin, user.pin);
 
     if (!isValid) {
       const nextAttempts = (user.failed_attempts || 0) + 1;
@@ -102,7 +100,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid User ID or PIN.' }, { status: 401 });
     }
 
-    // Successful authentication: reset counters and issue HttpOnly session cookie
     await supabaseAdmin
       .from('app_users')
       .update({

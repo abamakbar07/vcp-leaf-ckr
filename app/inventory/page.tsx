@@ -4,7 +4,7 @@
 import { Suspense, Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { writeWorkbook } from '@/lib/excel';
-import AppNav from '@/components/AppNav';
+import { AppNav } from '@/components/AppNav';
 import { useToast } from '@/components/ui/Toast';
 import {
   DEFAULT_FUM_LIMIT, daysBetween, fmtDate, ibStaleness, loadCurrentSnapshot, loadFumigationLimit, todayIso, type SnapshotMeta,

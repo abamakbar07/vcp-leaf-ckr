@@ -49,11 +49,11 @@ export function AppNav() {
       label: 'Inventory',
       visible: Boolean(user && canAccessModule(user.role, 'operational')),
     },
-    {
-      href: '/loading',
-      label: 'Loading',
-      visible: Boolean(user && canAccessModule(user.role, 'operational')),
-    },
+    // {
+    //   href: '/loading',
+    //   label: 'Loading',
+    //   visible: Boolean(user && canAccessModule(user.role, 'operational')),
+    // },
     {
       href: '/admin',
       label: 'Admin Panel',

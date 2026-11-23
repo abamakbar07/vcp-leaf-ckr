@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { requireApiAuth, logAuditEvent, revokeAllUserSessions } from '@/lib/auth/session';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
-import { generateSecurePin, hashPin } from '@/lib/auth/crypto';
+import { generateSecurePin } from '@/lib/auth/crypto';
 import { canManageTargetUser, UserRole } from '@/lib/auth/rbac';
 
-export const runtime = 'nodejs';
+// export const runtime = 'nodejs';
 
 export async function PATCH(
   request: Request,
@@ -35,12 +35,11 @@ export async function PATCH(
   // Action A: Reset PIN (generates CSPRNG PIN, invalidates active sessions, enforces first-login change)
   if (body.action === 'reset_pin') {
     const newPin = generateSecurePin();
-    const newHash = await hashPin(newPin);
 
     await supabaseAdmin
       .from('app_users')
       .update({
-        pin_hash: newHash,
+        pin: newPin,
         must_change_pin: true,
         failed_attempts: 0,
         locked_until: null,

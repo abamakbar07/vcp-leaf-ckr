@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { requireApiAuth, logAuditEvent } from '@/lib/auth/session';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
-import { generateSecurePin, hashPin } from '@/lib/auth/crypto';
+import { generateSecurePin } from '@/lib/auth/crypto';
 import { canManageTargetUser, UserRole } from '@/lib/auth/rbac';
 
-export const runtime = 'nodejs';
+// export const runtime = 'nodejs';
 
 const VALID_ROLES: UserRole[] = ['Administrator', 'Admin', 'Management', 'Checker', 'FD'];
 
@@ -71,7 +71,6 @@ export async function POST(request: Request) {
   }
 
   const initialPin = generateSecurePin();
-  const pinHash = await hashPin(initialPin);
 
   const { data: created, error } = await supabaseAdmin
     .from('app_users')
@@ -79,7 +78,7 @@ export async function POST(request: Request) {
       user_id: userId,
       full_name: fullName,
       role,
-      pin_hash: pinHash,
+      pin: initialPin,
       must_change_pin: true,
       is_active: true,
       created_by: auth.user.user_id,
@@ -88,7 +87,7 @@ export async function POST(request: Request) {
     .single();
 
   if (error || !created) {
-    return NextResponse.json({ error: 'Failed to create user account.' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to create user.' }, { status: 500 });
   }
 
   await logAuditEvent({

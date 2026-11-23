@@ -1,12 +1,20 @@
-import 'dotenv/config';
+import { config } from 'dotenv';
+config({ path: '.env.local' });
+config(); // fallback to .env if present
+
 import { createClient } from '@supabase/supabase-js';
-import { generateSecurePin, hashPin } from '../lib/auth/crypto';
+import { generateSecurePin } from '../lib/auth/crypto';
 import type { UserRole } from '../lib/auth/rbac';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !serviceRoleKey) {
+  console.error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local');
+  process.exit(1);
+}
+
+const supabase = createClient(supabaseUrl, serviceRoleKey);
 
 interface SeedAccount {
   user_id: string;
@@ -55,7 +63,7 @@ const PREDEFINED_USERS: SeedAccount[] = [
 
 async function seedUsers() {
   const issuedPins = new Set<string>();
-  const credentialSheet: Array<{ user_id: string; full_name: string; role: string; initial_pin: string }> = [];
+  const credentialSheet: Array<{ user_id: string; full_name: string; role: string; pin: string }> = [];
 
   for (const acct of PREDEFINED_USERS) {
     const { data: existing } = await supabase
@@ -71,14 +79,13 @@ async function seedUsers() {
 
     const pin = generateSecurePin(issuedPins);
     issuedPins.add(pin);
-    const pinHash = await hashPin(pin);
 
     const { error } = await supabase.from('app_users').insert({
       user_id: acct.user_id,
       full_name: acct.full_name,
       role: acct.role,
       is_super_user: Boolean(acct.is_super_user),
-      pin_hash: pinHash,
+      pin,
       must_change_pin: true,
       is_active: true,
       created_by: 'SYSTEM_SEED',
@@ -93,11 +100,11 @@ async function seedUsers() {
       user_id: acct.user_id,
       full_name: acct.full_name,
       role: acct.role,
-      initial_pin: pin,
+      pin,
     });
   }
 
-  console.log('\n=== ONE-TIME INITIAL CREDENTIALS (DISTRIBUTE INDIVIDUALLY & CLEAR TERMINAL) ===');
+  console.log('\n=== INITIAL CREDENTIALS ===');
   console.table(credentialSheet);
 }
 

@@ -5,7 +5,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { fetchPaged } from '@/lib/db';
-import AppNav from '@/components/AppNav';
+import { AppNav } from '@/components/AppNav';
 import { useToast } from '@/components/ui/Toast';
 import SkuMasterSection from '@/components/admin/SkuMasterSection';
 import OrderImportSection from '@/components/admin/OrderImportSection';

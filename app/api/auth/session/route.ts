@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser, logAuditEvent } from '@/lib/auth/session';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
-import { hashPin, isValidPinFormat, isWeakPin, verifyPin } from '@/lib/auth/crypto';
+import { isValidPinFormat, isWeakPin, verifyPin } from '@/lib/auth/crypto';
 
-export const runtime = 'nodejs';
+// export const runtime = 'nodejs';
 
 export async function GET() {
   const user = await getCurrentUser();
@@ -21,7 +21,6 @@ export async function PATCH(request: Request) {
 
   const body = await request.json();
 
-  // Case 1: Self-service PIN Change (includes mandatory first-login PIN change)
   if (body.action === 'change_pin') {
     const currentPin = String(body.currentPin || '').trim();
     const newPin = String(body.newPin || '').trim();
@@ -44,20 +43,18 @@ export async function PATCH(request: Request) {
 
     const { data: dbUser } = await supabaseAdmin
       .from('app_users')
-      .select('pin_hash')
+      .select('pin')
       .eq('id', user.id)
       .single();
 
-    const validCurrent = await verifyPin(currentPin, dbUser?.pin_hash ?? null);
-    if (!validCurrent) {
+    if (!verifyPin(currentPin, dbUser?.pin ?? null)) {
       return NextResponse.json({ error: 'Current PIN is incorrect.' }, { status: 401 });
     }
 
-    const newHash = await hashPin(newPin);
     await supabaseAdmin
       .from('app_users')
       .update({
-        pin_hash: newHash,
+        pin: newPin,
         must_change_pin: false,
         pin_changed_at: new Date().toISOString(),
       })
@@ -73,7 +70,6 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // Case 2: Self-service Permitted Profile Update (Full Name only — never role or active status)
   if (body.action === 'update_profile') {
     const fullName = String(body.fullName || '').trim();
     if (fullName.length < 2 || fullName.length > 80) {

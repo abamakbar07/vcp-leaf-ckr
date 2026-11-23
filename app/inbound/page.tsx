@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { loadSkuMap } from '@/lib/dashboardData';
 import type { AsnSummary } from '@/lib/inbound';
-import AppNav from '@/components/AppNav';
+import { AppNav } from '@/components/AppNav';
 import { useToast } from '@/components/ui/Toast';
 import AsnTab from '@/components/inbound/AsnTab';
 import RecordTab from '@/components/inbound/RecordTab';

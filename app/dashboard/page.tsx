@@ -3,7 +3,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import AppNav from '@/components/AppNav';
+import { AppNav } from '@/components/AppNav';
 import { useToast } from '@/components/ui/Toast';
 import PoTable from '@/components/dashboard/PoTable';
 import LotTable from '@/components/dashboard/LotTable';
