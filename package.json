@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@node-rs/argon2": "^2.2.2",
     "@supabase/supabase-js": "^2.118.0",
     "html2pdf.js": "^0.14.0",
     "jsbarcode": "^3.12.3",
