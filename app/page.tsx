@@ -1,14 +1,14 @@
+import { Suspense } from 'react';
 import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth/session';
 import { canAccessModule } from '@/lib/auth/rbac';
 
-export default async function LandingPage({
+async function LandingContent({
   searchParams,
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  const user = await getCurrentUser();
-  const params = await searchParams;
+  const [user, params] = await Promise.all([getCurrentUser(), searchParams]);
 
   const modules = [
     {
@@ -51,7 +51,7 @@ export default async function LandingPage({
   ];
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
+    <>
       {params.error === 'access_denied' && (
         <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
           Access denied: Your assigned role does not have permission to open that module.
@@ -159,6 +159,26 @@ export default async function LandingPage({
           </div>
         ))}
       </section>
+    </>
+  );
+}
+
+export default function LandingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  return (
+    <main className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
+      <Suspense
+        fallback={
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 shadow-sm">
+            Loading ASSA LOGISTICS (VCP) workspace...
+          </div>
+        }
+      >
+        <LandingContent searchParams={searchParams} />
+      </Suspense>
     </main>
   );
 }

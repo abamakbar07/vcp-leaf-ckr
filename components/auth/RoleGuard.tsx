@@ -1,8 +1,9 @@
+import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/session';
 import { AppModule, canAccessModule } from '@/lib/auth/rbac';
 
-export async function RoleGuard({
+async function RoleGuardCheck({
   module,
   children,
 }: {
@@ -16,4 +17,24 @@ export async function RoleGuard({
     redirect('/?error=access_denied');
   }
   return <>{children}</>;
+}
+
+export function RoleGuard({
+  module,
+  children,
+}: {
+  module: AppModule;
+  children: React.ReactNode;
+}) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[50vh] items-center justify-center text-xs text-slate-500">
+          Verifying access permissions...
+        </div>
+      }
+    >
+      <RoleGuardCheck module={module}>{children}</RoleGuardCheck>
+    </Suspense>
+  );
 }

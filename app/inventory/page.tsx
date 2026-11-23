@@ -121,7 +121,7 @@ export default function InventoryPage() {
 
   return (
     <div className="max-w-6xl mx-auto p-4 bg-gray-50 min-h-screen text-sm">
-      <AppNav current="inventory" title="Stok Inventory Balance (IB)" subtitle="Referensi stok & umur fumigasi dari WMS" />
+      <AppNav />
       {toast}
       <Suspense fallback={<div className="p-4 text-gray-400">Memuat halaman stok IB...</div>}>
       <div className={`rounded-lg border p-3 mb-4 text-sm ${meta ? (stale.stale ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200') : 'bg-amber-50 border-amber-200'}`}>
