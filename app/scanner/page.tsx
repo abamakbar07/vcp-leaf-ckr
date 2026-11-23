@@ -14,7 +14,7 @@ import MonitoringModal from '@/components/scanner/MonitoringModal';
 import LoadingTab from '@/components/scanner/LoadingTab';
 import PickingTab from '@/components/scanner/PickingTab';
 import StatusConfirmModal from '@/components/scanner/StatusConfirmModal';
-import { DEFAULT_FUM_LIMIT, IbCache, checkFumigation, fmtDate, ibStaleness, loadFumigationLimit, type FumCheck, type SnapshotMeta } from '@/lib/inventory';
+import { DEFAULT_FUM_LIMIT, IbCache, checkFumigation, fmtDate, ibStaleness, loadFumigationLimit, type FumCheck, type LotStock, type SnapshotMeta } from '@/lib/inventory';
 import type { FeedbackType, Notify, Order, OrderItem, PoStatus } from '@/components/scanner/types';
 
 type ValidBarcode = Extract<ParsedBarcode, { isValid: true }>;
@@ -50,6 +50,7 @@ export default function ScannerApp() {
   const ibKeyRef = useRef('');
   const [ibMeta, setIbMeta] = useState<SnapshotMeta | null>(null);
   const [ibTick, setIbTick] = useState(0);
+  const [ibStocks, setIbStocks] = useState<Record<string, LotStock>>({});
   const [fumLimit, setFumLimit] = useState(DEFAULT_FUM_LIMIT);
   const fumLimitRef = useRef(DEFAULT_FUM_LIMIT);
 
@@ -381,6 +382,15 @@ _Reported via VCP-OP RF Scanner App_`;
   const filteredPOs = byWH.filter(o => o.arrival_date === activeDate && ritOf(o) === activeRit);
 
   const poHeader = allOrders.find(o => o.po_number === activePO && ritOf(o) === activeRit);
+  const ibArrivalDate = poHeader?.arrival_date;
+  useEffect(() => {
+    if (!ibArrivalDate) { setIbStocks({}); return; }
+    const stocks: Record<string, LotStock> = {};
+    poItems.forEach(item => {
+      stocks[item.lot_code] = ibRef.current.stock(item.lot_code, ibArrivalDate, fumLimit);
+    });
+    setIbStocks(stocks);
+  }, [poItems, ibArrivalDate, fumLimit, ibTick]);
   const totalTargetCT = poItems.reduce((s, i) => s + Number(i.qty_usage_ct), 0);
   const totalScannedCT = poItems.reduce((s, i) => s + Number(i.scanned_ct || 0), 0);
   const pct = totalTargetCT > 0 ? Math.min(100, Math.round((totalScannedCT / totalTargetCT) * 100)) : 0;
@@ -575,13 +585,13 @@ _Reported via VCP-OP RF Scanner App_`;
                       <thead><tr className="text-gray-500"><th className="text-left p-1">LOT</th><th className="text-left p-1">Stok</th><th className="text-left p-1">Valid</th><th className="text-left p-1">&gt;{fumLimit}hr</th><th className="text-left p-1">Tanpa tgl</th></tr></thead>
                       <tbody>
                         {poItems.map(i => {
-                          const st = ibRef.current.stock(i.lot_code, poHeader.arrival_date, fumLimit);
+                          const st = ibStocks[i.lot_code];
                           const need = Number(i.qty_usage_ct) - (i.scanned_ct || 0);
                           return (
                             <tr key={i.lot_code} className="border-t border-amber-100">
-                              <td className="p-1 font-bold">{i.lot_code}</td><td className="p-1">{st.total}</td>
-                              <td className={`p-1 font-bold ${st.eligible + 0.05 < need ? 'text-red-600' : 'text-green-700'}`}>{st.eligible}</td>
-                              <td className="p-1">{st.expired}</td><td className="p-1">{st.noDate}</td>
+                              <td className="p-1 font-bold">{i.lot_code}</td><td className="p-1">{st?.total ?? '—'}</td>
+                              <td className={`p-1 font-bold ${st ? (st.eligible + 0.05 < need ? 'text-red-600' : 'text-green-700') : ''}`}>{st?.eligible ?? '—'}</td>
+                              <td className="p-1">{st?.expired ?? '—'}</td><td className="p-1">{st?.noDate ?? '—'}</td>
                             </tr>
                           );
                         })}
