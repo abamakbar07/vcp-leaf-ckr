@@ -2,6 +2,7 @@
   "name": "vcp-leaf-ckr",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -9,7 +10,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@node-rs/argon2": "^2.2.2",
     "@supabase/supabase-js": "^2.118.0",
+    "crypto": "latest",
+    "dotenv": "^18.0.10",
     "html2pdf.js": "^0.14.0",
     "jsbarcode": "^3.12.3",
     "jszip": "^3.10.2",
@@ -24,6 +28,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "crypto": "latest",
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
     "tailwindcss": "^4",

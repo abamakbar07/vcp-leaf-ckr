@@ -3,7 +3,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import AppNav from '@/components/AppNav';
+import { AppNav } from '@/components/AppNav';
 import { useToast } from '@/components/ui/Toast';
 import PoTable from '@/components/dashboard/PoTable';
 import LotTable from '@/components/dashboard/LotTable';
@@ -123,7 +123,7 @@ export default function DashboardPage() {
 
   return (
     <div className="max-w-6xl mx-auto p-4 bg-gray-50 min-h-screen text-sm">
-      <AppNav current="dashboard" title="VCP-OP Live Dashboard" subtitle="Picking → Grouping → QC → Monitoring → Loading" />
+      <AppNav />
       {toast}
 
       {/* FILTER */}

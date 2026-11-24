@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { loadSkuMap } from '@/lib/dashboardData';
 import type { AsnSummary } from '@/lib/inbound';
-import AppNav from '@/components/AppNav';
+import { AppNav } from '@/components/AppNav';
 import { useToast } from '@/components/ui/Toast';
 import AsnTab from '@/components/inbound/AsnTab';
 import RecordTab from '@/components/inbound/RecordTab';
@@ -47,7 +47,7 @@ export default function InboundPage() {
 
   return (
     <div className="max-w-3xl mx-auto p-4 bg-gray-50 min-h-screen text-sm">
-      <AppNav current="inbound" title="Inbound Receiving Helper" subtitle="Record SN aktual → tampilkan untuk receive WMS" />
+      <AppNav />
       {toast}
 
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-3 mb-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
